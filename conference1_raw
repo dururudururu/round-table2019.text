@@ -8,18 +8,20 @@ library(stringr)
 library(extrafont)
 library(reshape2)
 library(lsa)
+library(topicmodels)
+library(igraph)
 KoNLP::useNIADic()
 
 extrafont::loadfonts(device="win")
-windowsFonts(HG=windowsFont("08SeoulHangang M"))
-windowsFonts(NS=windowsFont("08SeoulNamsan M"))
+windowsFonts(HG=windowsFont("SeoulHangang M"))
+windowsFonts(NS=windowsFont("SeoulNamsan M"))
 ################################################
 
 
 ## 0.File load
-setwd("D:/round-table")
-dat <- read.csv("1st_raw.csv", header=T, stringsAsFactors = F)
-
+setwd("C:/data/roundtable")
+tab1 <- read.csv("1st_raw_table.csv", header=T, stringsAsFactors=F)
+sum1 <- read.csv("1st_raw_summary.csv", header=T, stringsAsFactors=F)
 
 ## 1.전처리(cleaning) 작업.
 
@@ -37,22 +39,34 @@ clean.1 <- function(x) {
   x <- gsub("[[:digit:]]","",x)
 }
 
-text_df <- apply(dat[,3:4], 1:2, clean.1) #clean.1 함수의 적용.
-
+tab1_clean <- apply(tab1[,3:4], 1:2, clean.1) #clean.1 함수의 적용.
+sum1_clean <- apply(sum1[,3:4], 1:2, clean.1) #clean.1 함수의 적용.
 
 # 1.2.SimplePos22으로 의미를 가지는 단어들 추출
 # "+"를 기준으로 분리시키기 -> 형태소 단위로 쪼갠다.
 #stringr로 /PV, /pA, /PX<-보조용언이라 안써도 될듯?, 
 #/MM, /MA 이게 들어가는 것만 뽑는다. -> 용언, 수식언
-text_list <- apply(text_df, 1:2, KoNLP::SimplePos22)
-text_word <- vector("list", 120)
+tab1_list <- apply(tab1_clean, 1:2, KoNLP::SimplePos22)
+sum1_list <- apply(sum1_clean, 1:2, KoNLP::SimplePos22)
+
+tab1_word <- vector("list", 120)
 for (i in 1:120) {
-  temp <- lapply(text_list[[i]], function(x) strsplit(x, split="[:+]"))
+  temp <- lapply(tab1_list[[i]], function(x) strsplit(x, split="[:+]"))
   temp <- unlist(temp)
   temp <- strsplit(temp, " ")
   temp <- unlist(temp)
   names(temp) <- NULL
-  text_word[[i]] <- temp
+  tab1_word[[i]] <- temp
+}
+
+sum1_word <- vector("list", 120)
+for (i in 1:120) {
+  temp <- lapply(sum1_list[[i]], function(x) strsplit(x, split="[:+]"))
+  temp <- unlist(temp)
+  temp <- strsplit(temp, " ")
+  temp <- unlist(temp)
+  names(temp) <- NULL
+  sum1_word[[i]] <- temp
 }
 
 # 1.3.의미있는 품사만 추출해서 정제.
@@ -77,89 +91,185 @@ words2df_tag <- function(wordvec) {
   temp <- as.data.frame(temp)
   names(temp) <- c("word", "tag")
   temp$word <- as.character(temp$word)
-  temp <- temp[-which(nchar(temp$word)<2),] #한 글자 단어 제거. 필요에 따라서 특정 품사에만 제한.
+  #temp <- temp[!which(nchar(temp$word)<2),] #한 글자 단어 제거. 필요에 따라서 특정 품사에만 제한.
   return(temp)
 }
 
-word_freq <- lapply(text_word, words2df_tag)  #단어와 품사가 기록됨.
+tab1_freq <- lapply(tab1_word, words2df_tag)  #단어와 품사가 기록됨
+sum1_freq <- lapply(sum1_word, words2df_tag)  #단어와 품사가 기록됨
 
-td_list <- vector("list",120)
-for (i in 1:120) {td_list[[i]] <- as.data.frame(table(word_freq[[i]]$word))}  #단어와 빈도가 기록됨.
+tab1_td_list <- vector("list",120)
+sum1_td_list <- vector("list",120)
+for (i in 1:120) {tab1_td_list[[i]] <- as.data.frame(table(tab1_freq[[i]]$word))}  #단어와 빈도가 기록됨.
+for (i in 1:120) {sum1_td_list[[i]] <- as.data.frame(table(sum1_freq[[i]]$word))}  #단어와 빈도가 기록됨.
 
-# td1은 교사, td2는 사정관의 Term-Document matrix(1행은 단어벡터)
 
-########### Problem3. 교사와 사정관의 발화 길이도 유의미한 관심대상인가?
-td1 <- Reduce(function(x,y) merge(x=x, y=y, by="Var1", all=T), td_list[c(1:34,36:60)])  #한 글자 단어를 삭제하면, 35번이 빈 리스트임.
-td1[is.na(td1)]<-0
-names(td1) <- c("term", 1:59)
+## table - t/o
+td_tab1_q1_t <- Reduce(function(x,y) merge(x=x, y=y, by="Var1", all=T), tab1_td_list[seq(1,60,4)])
+td_tab1_q2_t <- Reduce(function(x,y) merge(x=x, y=y, by="Var1", all=T), tab1_td_list[seq(2,60,4)])
+td_tab1_q3_t <- Reduce(function(x,y) merge(x=x, y=y, by="Var1", all=T), tab1_td_list[seq(3,60,4)])
+td_tab1_q4_t <- Reduce(function(x,y) merge(x=x, y=y, by="Var1", all=T), tab1_td_list[seq(4,60,4)])
+td_tab1_q1_t[is.na(td_tab1_q1_t)]<-0
+td_tab1_q2_t[is.na(td_tab1_q2_t)]<-0
+td_tab1_q3_t[is.na(td_tab1_q3_t)]<-0
+td_tab1_q4_t[is.na(td_tab1_q4_t)]<-0
 
-td2 <- Reduce(function(x,y) merge(x=x, y=y, by="Var1", all=T), td_list[61:120])
-td2[is.na(td2)]<-0
-names(td2) <- c("term", 1:60)
+#한 번 등장하는 단어 제거
+td_tab_t <- vector("list",4)
+td_tab_t[[1]]<-td_tab1_q1_t[-which(rowSums(td_tab1_q1_t[,-1])==1),]
+td_tab_t[[2]]<-td_tab1_q2_t[-which(rowSums(td_tab1_q2_t[,-1])==1),]
+td_tab_t[[3]]<-td_tab1_q3_t[-which(rowSums(td_tab1_q3_t[,-1])==1),]
+td_tab_t[[4]]<-td_tab1_q4_t[-which(rowSums(td_tab1_q4_t[,-1])==1),]
+
+
+
+td_tab1_q1_o <- Reduce(function(x,y) merge(x=x, y=y, by="Var1", all=T), tab1_td_list[seq(61,120,4)])
+td_tab1_q2_o <- Reduce(function(x,y) merge(x=x, y=y, by="Var1", all=T), tab1_td_list[seq(62,120,4)])
+td_tab1_q3_o <- Reduce(function(x,y) merge(x=x, y=y, by="Var1", all=T), tab1_td_list[seq(63,120,4)])
+td_tab1_q4_o <- Reduce(function(x,y) merge(x=x, y=y, by="Var1", all=T), tab1_td_list[seq(64,120,4)])
+td_tab1_q1_o[is.na(td_tab1_q1_o)]<-0
+td_tab1_q2_o[is.na(td_tab1_q2_o)]<-0
+td_tab1_q3_o[is.na(td_tab1_q3_o)]<-0
+td_tab1_q4_o[is.na(td_tab1_q4_o)]<-0
+
+td_tab_o <- vector("list",4)
+td_tab_o[[1]]<-td_tab1_q1_o[-which(rowSums(td_tab1_q1_o[,-1])==1),]
+td_tab_o[[2]]<-td_tab1_q2_o[-which(rowSums(td_tab1_q2_o[,-1])==1),]
+td_tab_o[[3]]<-td_tab1_q3_o[-which(rowSums(td_tab1_q3_o[,-1])==1),]
+td_tab_o[[4]]<-td_tab1_q4_o[-which(rowSums(td_tab1_q4_o[,-1])==1),]
+
+
+
+
+
+## Summary -t/o
+td_sum1_q1_t <- Reduce(function(x,y) merge(x=x, y=y, by="Var1", all=T), sum1_td_list[seq(1,60,4)])
+td_sum1_q2_t <- Reduce(function(x,y) merge(x=x, y=y, by="Var1", all=T), sum1_td_list[seq(2,60,4)])
+td_sum1_q3_t <- Reduce(function(x,y) merge(x=x, y=y, by="Var1", all=T), sum1_td_list[seq(3,60,4)])
+td_sum1_q4_t <- Reduce(function(x,y) merge(x=x, y=y, by="Var1", all=T), sum1_td_list[seq(4,60,4)])
+td_sum1_q1_t[is.na(td_sum1_q1_t)]<-0
+td_sum1_q2_t[is.na(td_sum1_q2_t)]<-0
+td_sum1_q3_t[is.na(td_sum1_q3_t)]<-0
+td_sum1_q4_t[is.na(td_sum1_q4_t)]<-0
+
+#한 번 등장하는 단어 제거
+td_sum_t <- vector("list",4)
+td_sum_t[[1]]<-td_sum1_q1_t[-which(rowSums(td_sum1_q1_t[,-1])==1),]
+td_sum_t[[2]]<-td_sum1_q2_t[-which(rowSums(td_sum1_q2_t[,-1])==1),]
+td_sum_t[[3]]<-td_sum1_q3_t[-which(rowSums(td_sum1_q3_t[,-1])==1),]
+td_sum_t[[4]]<-td_sum1_q4_t[-which(rowSums(td_sum1_q4_t[,-1])==1),]
+
+
+## Summary -t/o
+td_sum1_q1_o <- Reduce(function(x,y) merge(x=x, y=y, by="Var1", all=T), sum1_td_list[seq(61,120,4)])
+td_sum1_q2_o <- Reduce(function(x,y) merge(x=x, y=y, by="Var1", all=T), sum1_td_list[seq(62,120,4)])
+td_sum1_q3_o <- Reduce(function(x,y) merge(x=x, y=y, by="Var1", all=T), sum1_td_list[seq(63,120,4)])
+td_sum1_q4_o <- Reduce(function(x,y) merge(x=x, y=y, by="Var1", all=T), sum1_td_list[seq(64,120,4)])
+td_sum1_q1_o[is.na(td_sum1_q1_o)]<-0
+td_sum1_q2_o[is.na(td_sum1_q2_o)]<-0
+td_sum1_q3_o[is.na(td_sum1_q3_o)]<-0
+td_sum1_q4_o[is.na(td_sum1_q4_o)]<-0
+
+#한 번 등장하는 단어 제거
+td_sum_o <- vector("list",4)
+td_sum_o[[1]]<-td_sum1_q1_o[-which(rowSums(td_sum1_q1_o[,-1])==1),]
+td_sum_o[[2]]<-td_sum1_q2_o[-which(rowSums(td_sum1_q2_o[,-1])==1),]
+td_sum_o[[3]]<-td_sum1_q3_o[-which(rowSums(td_sum1_q3_o[,-1])==1),]
+td_sum_o[[4]]<-td_sum1_q4_o[-which(rowSums(td_sum1_q4_o[,-1])==1),]
+
+
+
+
 
 
 
 # 2.전체 빈도 살펴보기
-total1 <- rowSums(td1[,-1])
-top1 <- data.frame(term=td1$term[total1>=10], freq=total1[total1>=10])
-total2 <- rowSums(td2[,-1])
-top2 <- data.frame(term=td2$term[total2>=10], freq=total2[total2>=10])
+setwd("C:/data/roundtable/results")
+total <- vector("list", 16)
+total[[1]] <- read.csv("tab_t_q1.csv", header=T, stringsAsFactors = F)
+total[[2]] <- read.csv("tab_t_q2.csv", header=T, stringsAsFactors = F)
+total[[3]] <- read.csv("tab_t_q3.csv", header=T, stringsAsFactors = F)
+total[[4]] <- read.csv("tab_t_q4.csv", header=T, stringsAsFactors = F)
+total[[5]] <- read.csv("tab_o_q1.csv", header=T, stringsAsFactors = F)
+total[[6]] <- read.csv("tab_o_q2.csv", header=T, stringsAsFactors = F)
+total[[7]] <- read.csv("tab_o_q3.csv", header=T, stringsAsFactors = F)
+total[[8]] <- read.csv("tab_o_q4.csv", header=T, stringsAsFactors = F)
+total[[9]] <- read.csv("sum_t_q1.csv", header=T, stringsAsFactors = F)
+total[[10]] <- read.csv("sum_t_q2.csv", header=T, stringsAsFactors = F)
+total[[11]] <- read.csv("sum_t_q3.csv", header=T, stringsAsFactors = F)
+total[[12]] <- read.csv("sum_t_q4.csv", header=T, stringsAsFactors = F)
+total[[13]] <- read.csv("sum_o_q1.csv", header=T, stringsAsFactors = F)
+total[[14]] <- read.csv("sum_o_q2.csv", header=T, stringsAsFactors = F)
+total[[15]] <- read.csv("sum_o_q3.csv", header=T, stringsAsFactors = F)
+total[[16]] <- read.csv("sum_o_q4.csv", header=T, stringsAsFactors = F)
 
-png("freq1.png",height=3000, width=3000, res=500)
-ggplot(top1, aes(x=freq, y=reorder(term, freq))) + 
-  geom_point(size=1) + xlab("단어빈도(교사)") + ylab("출현단어") +
+
+total_freq <- vector("list",16)
+for (i in 1:16) {
+  temp <- rowSums(total[[i]][,-1])
+  total_freq[[i]] <- data.frame(term=total[[i]][,1], freq=temp)
+}
+
+
+png("sum1_t_q1.png",height=4000, width=3000, res=500)
+ggplot(total_freq[[11]][total_freq[[11]]$freq>1,], aes(x=freq, y=reorder(term, freq))) + 
+  geom_point(size=1) + xlab("단어빈도") + ylab("출현단어") +
   theme_bw() + theme(axis.title=element_text(family='HG'),
-                     axis.text=element_text(family='HG'))
+                     axis.text=element_text(family='HG', size=10))
 dev.off()
 
-png("freq2.png",height=3000, width=3000, res=500)
-ggplot(top2, aes(x=freq, y=reorder(term, freq))) + 
-  geom_point(size=1) + xlab("단어빈도(사정관)") + ylab("출현단어") +
-  theme_bw() + theme(axis.title=element_text(family='HG'),
-                     axis.text=element_text(family='HG'))
-dev.off()
 
-tab <- data.frame(rbind(top1,top2), c(rep(1,45), rep(2,35)))
-png("wc1.png",height=1600, width=1600, res=500)
-## IDEA: 공통단어를 교집합으로 묶어주는 commonality cloud
-##       두 집단을 비교 가능한 comparison cloud
-wordcloud(words=tab$term, freq=log(tab$freq, base=5), colors=ifelse(tab[,3]==1,"red","blue"), max.words = 100,
-          scale=c(0.1,1.5),rot.per=0, random.order = F, family='NS')
+# 워드클라우드
+png("tab1_o_q1.png",height=1600, width=1600, res=500)
+wordcloud(words=total_freq[[5]]$term, freq=log(total_freq[[5]]$freq), min.freq=0.01, max.words = 100,
+          scale=c(0.3,1.2), rot.per=0, color=brewer.pal(4,"Dark2"), random.order = F, family='NS')
 dev.off()
 
 
 
 # 3.잠재의미분석
-## 동일한데 표현형이 다른 단어들을 더 정제해야 함 -> 띄어쓰기 교정하고 형태소분석 재적용 바람.
-## 무엇을 문서로 삼고, 매핑, 비교의 목적은 무엇인가? 60문서(테이블x주제), 15문서(테이블), 4문서(주제) x 2문서(교사/사정관)
-sum1 <- data.frame(term=td1$term, freq=total1)
-sum2 <- data.frame(term=td2$term, freq=total2)
-td<-merge(x=sum1, y=sum2, by="term", all=T)
-td[is.na(td)]<-0
-
 ########### Problem4.raw freq,tf-idf,entropy,... 어떤 변환을 쓸지.
-LSA <-lsa(td[,-1], dim=2)
-P<-LSA$dk %*% diag(LSA$sk)
-gdf <- data.frame(P)
-sub <- as.factor(c(1,2))
-gdf <- data.frame(sub,P)
+LSA <-lsa(total[[1]][,-1], dim=15)
+LSA$sk
+summary(princomp(total[[4]][,-1]))
+term <- LSA$tk[,2]
+cut <- quantile(abs(term), .5)
+total[[2]]$term[abs(term)>cut]
 
-png("lsa.png",height=2000, width=2000, res=500)
-ggplot(gdf)+aes(x=X1, y=X2, label=1:2)+geom_point(color=sub, size=5)
-dev.off()
 
-## X2 축의 의미는?
-tt<-LSA$tk[,2]
-names(tt) <- td$term
-cut<-quantile(abs(tt),0.5)
-tt<-tt[abs(tt)>cut]
-terms <- names(tt)
-COL <- ifelse(tt>0, "red", "blue")
-tmat <- cbind(c(tt[tt>0],rep(0,length(tt[tt<=0]))),
-              c(rep(0,length(tt[tt>0])),tt[tt<=0]))
-row.names(tmat) <- c(names(tt)[tt>0],names(tt)[tt<=0])
+LSA <- lsa(total[[5]][,-1], dim=15)
+LSA$sk
+summary(princomp(total[[8]][,-1]))
+term <- LSA$tk[,2]
+cut <- quantile(abs(term), .5)
+total[[5]]$term[abs(term)>cut]
 
-png("wc2.png",height=2550, width=2550, res=500)
-comparison.cloud(tmat, colors=c("red","black"), max.words = 100,
-                 scale=c(0.2,1), rot.per=0, random.order = F, family='NS')
-dev.off()
+
+# 4.네트워크분석
+q1t <- total_freq[[1]]$freq
+t <- q1t%*%t(q1t)
+row.names(t) <- total_freq[[1]]$term
+colnames(t) <- total_freq[[1]]$term
+
+t[-37,]=0
+t30 <- t[t[37,]>48,t[37,]>48]
+g <- graph.adjacency(t30, mode="undirected", weight=T)
+plot(g, layout=layout.auto,
+     vertex.label.cex=1.2, vertex.label.family="NS", 
+     vertex.color="grey", vertex.size=1,
+     edge.arrow.size=1)
+
+
+
+q1o <- total_freq[[5]]$freq
+t <- q1o%*%t(q1o)
+row.names(t) <- total_freq[[5]]$term
+colnames(t) <- total_freq[[5]]$term
+
+t[-17,]=0
+t30 <- t[t[17,]>18,t[17,]>18]
+g <- graph.adjacency(t30, mode="undirected", weight=T)
+plot(g, layout=layout.auto,
+     vertex.label.cex=1.2, vertex.label.family="NS", 
+     vertex.color="grey", vertex.size=1,
+     edge.arrow.size=1)
