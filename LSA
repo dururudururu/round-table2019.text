@@ -23,6 +23,8 @@ setwd("C:/data/roundtable")
 tab1 <- read.csv("1st_raw_table.csv", header=T, stringsAsFactors=F)
 sum1 <- read.csv("1st_raw_summary.csv", header=T, stringsAsFactors=F)
 
+setwd("C:/data/roundtable/results2")
+
 ## 1.전처리(cleaning) 작업.
 ########### Problem2. KoNLP가 품사태깅/토큰화가 정교하지 않음(ex/ 무기력한 -> NC로 태깅됨)
 ###########  -> 1.사전에 단어추가해서 해결되는지? 2.다른 형태소 분석기 사용 고려해볼 것
@@ -172,12 +174,40 @@ td <- Reduce(function(x,y) merge(x=x, y=y, by="term", all=T),
 td[is.na(td)]<-0
 names(td) <- c("term", "q1t","q2t","q3t","q4t","q1o","q2o","q3o","q4o")
 
+## 의미없는 단어 제거1 - 빈도분석용도
+meanless <- c(which(td$term=="되다"), which(td$term=="성장하"), 
+              which(td$term=="아니다"), which(td$term=="어떤"),
+              which(td$term=="또한"), which(td$term=="하다"),
+              which(td$term=="가다"), which(td$term=="이런"),
+              which(td$term=="너무"), which(td$term=="경우"))
+td <- td[-meanless,]
 write.csv(td, "td.csv")
+
+
+
+
 
 dim(td)
 td_red <- td[-which(rowSums(td[,-1])==1),]
 dim(td_red)
 
+idf_trim <- function(td) {
+  mat <- td[,-1]
+  names <- td[,1]
+
+  idf = dim(mat)[2]/rowSums(mat>0)
+  temp <- quantile(idf,seq(0,1,0.05))
+
+  #trim
+  if (temp[2]!=temp[3]) {
+    mat <- mat[-which(idf<=temp[2]),]
+    names <- names[-which(idf<=temp[2])]}   #너무 자주 나옴.
+  td2 <- cbind.data.frame(names, mat)
+  
+  return(td2)
+}
+
+#td_red <- idf_trim(td_red)
 
 ### 1.빈도 살펴보기
 a1 <- td_red[,c(1,2)][td_red[,2]>2,]; names(a1) <- c("term","freq")
@@ -189,16 +219,18 @@ a6 <- td_red[,c(1,7)][td_red[,7]>2,]; names(a6) <- c("term","freq")
 a7 <- td_red[,c(1,8)][td_red[,8]>2,]; names(a7) <- c("term","freq")
 a8 <- td_red[,c(1,9)][td_red[,9]>2,]; names(a8) <- c("term","freq")
 
-setwd("C:/data/roundtable/results2")
+filenames <- c("a1","a2","a3","a4","a5","a6","a7","a8")
+filepng <- list(a1,a2,a3,a4,a5,a6,a7,a8)
 
-png("a8.png", width=3000, height=1200, res=200)
-ggplot(a8, aes(x=term, y=freq, fill=freq)) + geom_bar(stat="identity") +
-  theme_bw() + xlab("출현단어") +ylab("단어빈도") +
-  theme(axis.text.x = element_text(family="HG", size=9, angle=60, vjust=0.6, colour="black"),
-        axis.title = element_text(family="HG")) +
-  scale_fill_gradient(low="grey94", high="blue")
-dev.off()
-
+for (i in 1:8) {
+  p <- ggplot(filepng[[i]], aes(x=term, y=freq, fill=freq)) + geom_bar(stat="identity") +
+      theme_bw() + xlab("출현단어") +ylab("단어빈도") +
+      theme(axis.text.x = element_text(family="HG", size=7, angle=60, vjust=0.6, colour="black"),
+            axis.title = element_text(family="HG")) +
+      scale_fill_gradient(low="grey94", high="black") +
+      guides(fill=FALSE)
+  ggsave(paste0(filenames[i],".png"),p)
+}
 
 ### 2.잠재의미분석
 tdlist <- list(td1, td2, td3, td4, td5, td6, td7, td8)
@@ -206,10 +238,8 @@ tdlist <- list(td1, td2, td3, td4, td5, td6, td7, td8)
 lsafun <- function(tdobject,dim, tfidf=F, trim=F) {
   #pca = 설명분산 확인
   #lsa = tk,dk,sk 산출
-  mat <- tdobject[,-1]
   
-  #trimming term w/ term frequency=1
-  if (trim==T) {mat <- mat[-which(rowSums(mat)==1),]}
+  mat <- tdobject[,-1]
   
   #tf-idf
   if (tfidf==T) {
@@ -217,11 +247,10 @@ lsafun <- function(tdobject,dim, tfidf=F, trim=F) {
     mat <- mat * idf}
   
   temp3 <- quantile(idf,seq(0,1,0.05))
-  
+
   #trim
-  if (trim==T) {
-    mat <- mat[-which(idf<temp3[2]),]   #너무 자주 나옴.
-    mat <- mat[-which(idf>temp3[20]),]} #너무 안 나옴.
+  if (trim==T & temp3[2]!=temp3[3]) {
+    mat <- mat[-which(idf<temp3[2]),]}   #너무 자주 나옴.
     
   temp1 <- summary(princomp(mat))
   temp2 <- lsa(mat,dim)
@@ -230,43 +259,78 @@ lsafun <- function(tdobject,dim, tfidf=F, trim=F) {
 }
 
   
-axisdist <- function(tdobject, length=20, trim=F, tfidf=F) {
+axisdist <- function(tdobject, length=20, trim=F, tfidf=F, dim=2) {
   ## 단어-점수 데이터 만들기
   # length = 상위 몇 개 단어?
-  lsaresult <- lsafun(tdobject,2,trim=trim,tfidf=tfidf)$lsa
+  lsaresult <- lsafun(tdobject,5,trim=trim,tfidf=tfidf)$lsa
 
   label = tdobject[,1]
   axisinfo1 = order(abs(lsaresult$tk[,1]),decreasing = T)[1:length]
   axisinfo2 = order(abs(lsaresult$tk[,2]),decreasing = T)[1:length]
+  axisinfo3 = order(abs(lsaresult$tk[,3]),decreasing = T)[1:length]
+  axisinfo4 = order(abs(lsaresult$tk[,4]),decreasing = T)[1:length]
+  axisinfo5 = order(abs(lsaresult$tk[,5]),decreasing = T)[1:length]
   
   Axis1_label <- as.character(label[axisinfo1])
   Axis2_label <- as.character(label[axisinfo2])
+  Axis3_label <- as.character(label[axisinfo3])
+  Axis4_label <- as.character(label[axisinfo4])
+  Axis5_label <- as.character(label[axisinfo5])
+
   Axis1_score <- lsaresult$tk[axisinfo1,1]
   Axis2_score <- lsaresult$tk[axisinfo2,2]
+  Axis3_score <- lsaresult$tk[axisinfo3,3]
+  Axis4_score <- lsaresult$tk[axisinfo4,4]
+  Axis5_score <- lsaresult$tk[axisinfo5,5]
   
-  return(data.frame(term=c(Axis1_label,Axis2_label),
-                    score=c(abs(Axis1_score),Axis2_score),
-                    axis=c(rep("Axis1",length),rep("Axis2",length))))
+  tlist <- list(Axis1_label,Axis2_label,Axis3_label,Axis4_label,Axis5_label)
+  score <- list(abs(Axis1_score),abs(Axis2_score),Axis3_score,Axis4_score,Axis5_score)
+  axis <- c(rep("Axis1",length),rep("Axis2",length),
+            rep("Axis3",length),rep("Axis4",length),rep("Axis5",length))
+  
+  return(data.frame(term=unlist(tlist[1:dim]),
+                    score=unlist(score[1:dim]),
+                    axis=axis[1:(dim*length)]))
 }
 
-b1 <- axisdist(td1,trim=F,tfidf=T)
-b2 <- axisdist(td2,trim=F,tfidf=T)
-b3 <- axisdist(td3,trim=F,tfidf=T)
-b4 <- axisdist(td4,trim=F,tfidf=T)
-b5 <- axisdist(td5,trim=F,tfidf=T)
-b6 <- axisdist(td6,trim=F,tfidf=T)
-b7 <- axisdist(td7,trim=F,tfidf=T)
-b8 <- axisdist(td8,trim=F,tfidf=T)
+
+tdlist <- list(td1,td2,td3,td4,td5,td6,td7,td8)
+blist <- vector("list",8)
+for (i in 1:8) {
+  tdn <- tdlist[[i]]
+  meanless <- c(which(tdn$Var1=="되다"), which(tdn$Var1=="성장하"), 
+                which(tdn$Var1=="아니다"), which(tdn$Var1=="어떤"),
+                which(tdn$Var1=="또한"), which(tdn$Var1=="하다"),
+                which(tdn$Var1=="가다"), which(tdn$Var1=="이런"),
+                which(tdn$Var1=="너무"), which(tdn$Var1=="경우"),
+                which(tdn$Var1=="년수업"), which(tdn$Var1=="그러다"),
+                which(tdn$Var1=="생기다"), which(tdn$Var1=="모든"),
+                which(tdn$Var1=="경우"), which(tdn$Var1=="결국"),
+                which(tdn$Var1=="같다"), which(tdn$Var1=="것인가에"),
+                which(tdn$Var1=="어떻다"), which(tdn$Var1=="부분"))
+  tdn <- tdn[-meanless,]
+  blist[[i]] <- axisdist(tdn,trim=F,tfidf=T, dim=2)}
 
 
-ggplot(b2, aes(x=term, y=score, fill=score)) + geom_bar(stat="identity") +
-  facet_grid(axis~., scale="free") + theme_bw() + xlab("출현단어") +ylab("단어빈도") +
-  theme(axis.text.x = element_text(family="HG", size=12, angle=60, vjust=0.6, colour="black"),
-        axis.title = element_text(family="HG", size=12)) +
-  scale_fill_gradient2(low="blue", mid="grey94", high="red", midpoint=0)
+filenames <- c("b1","b2","b3","b4","b5","b6","b7","b8")
 
+for (i in 1:4) {
+  p <- ggplot(blist[[i]], aes(x=term, y=score, fill=score)) + geom_bar(stat="identity") +
+      facet_wrap(axis~., scale="free", nrow=2) + theme_bw() + xlab("출현단어") +ylab("단어빈도") +
+      theme(axis.text.x = element_text(family="HG", size=13, angle=60, vjust=0.6, colour="black"),
+            axis.title.x = element_text(family="NS", face="bold", size=12),
+            axis.title.y = element_text(family="NS", face="bold", size=12))+
+    scale_fill_gradient(low=brewer.pal(9,"Oranges")[2], high=brewer.pal(9,"Oranges")[8])
+  ggsave(paste0(filenames[[i]],".png"))}
 
-
+for (i in 5:8) {
+  p <- ggplot(blist[[i]], aes(x=term, y=score, fill=score)) + geom_bar(stat="identity") +
+      facet_wrap(axis~., scale="free", nrow=2) + theme_bw() + xlab("출현단어") +ylab("단어빈도") +
+      theme(axis.text.x = element_text(family="HG", size=13, angle=60, vjust=0.6, colour="black"),
+            axis.title.x = element_text(family="NS", face="bold", size=12),
+            axis.title.y = element_text(family="NS", face="bold", size=12))+
+    scale_fill_gradient(low=brewer.pal(9,"Blues")[2], high=brewer.pal(9,"Blues")[8])
+  ggsave(paste0(filenames[[i]],".png"))}
 
 
 
