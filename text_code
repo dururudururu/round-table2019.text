@@ -1,0 +1,465 @@
+################## Library Settings ###########
+library(rJava)
+library(KoNLP)
+library(tm)
+library(ggplot2)
+library(wordcloud)
+library(stringr)
+library(extrafont)
+library(reshape2)
+library(lsa)
+library(topicmodels)
+library(igraph)
+library(MASS)
+library(corrplot)
+KoNLP::useNIADic()
+
+extrafont::loadfonts(device="win")
+windowsFonts(HG=windowsFont("SeoulHangang M"))
+windowsFonts(NS=windowsFont("SeoulNamsan M"))
+################################################
+
+
+setwd("C:/data/roundtable/results2")
+
+## 0.File load
+setwd("C:/data/roundtable")
+tab1 <- read.csv("1st_raw_table.csv", header=T, stringsAsFactors=F)
+sum1 <- read.csv("1st_raw_summary.csv", header=T, stringsAsFactors=F)
+
+setwd("C:/data/roundtable/results2")
+
+## 1.전처리(cleaning) 작업.
+########### Problem2. KoNLP가 품사태깅/토큰화가 정교하지 않음(ex/ 무기력한 -> NC로 태깅됨)
+###########  -> 1.사전에 단어추가해서 해결되는지? 2.다른 형태소 분석기 사용 고려해볼 것
+
+#함수로 만들어서 lapply 사용한다.
+clean.1 <- function(x) {
+  #구두점 및 순자 제거함수.
+  #필요시에 자주 등장하는 의미없는 단어 추가바람
+  x <- gsub("[[:punct:]]","",x)
+  x <- gsub("[[:digit:]]","",x)
+}
+
+tab1_clean <- apply(tab1[,3:4], 1:2, clean.1) #clean.1 함수의 적용.
+tab1_clean <- data.frame(q1_t = c(tab1_clean[seq(1,60,4),1]),
+                         q2_t = c(tab1_clean[seq(2,60,4),1]),
+                         q3_t = c(tab1_clean[seq(3,60,4),1]),
+                         q4_t = c(tab1_clean[seq(4,60,4),1]),
+                         q1_o = c(tab1_clean[seq(1,60,4),2]),
+                         q2_o = c(tab1_clean[seq(2,60,4),2]),
+                         q3_o = c(tab1_clean[seq(3,60,4),2]),
+                         q4_o = c(tab1_clean[seq(4,60,4),2]))
+
+sum1_clean <- apply(sum1[,3:4], 1:2, clean.1) #clean.1 함수의 적용.
+sum1_clean <- data.frame(q1_t = c(sum1_clean[seq(1,60,4),1]),
+                         q2_t = c(sum1_clean[seq(2,60,4),1]),
+                         q3_t = c(sum1_clean[seq(3,60,4),1]),
+                         q4_t = c(sum1_clean[seq(4,60,4),1]),
+                         q1_o = c(sum1_clean[seq(1,60,4),2]),
+                         q2_o = c(sum1_clean[seq(2,60,4),2]),
+                         q3_o = c(sum1_clean[seq(3,60,4),2]),
+                         q4_o = c(sum1_clean[seq(4,60,4),2]))
+
+
+# 1.2.SimplePos22으로 의미를 가지는 단어들 추출
+# "+"를 기준으로 분리시키기 -> 형태소 단위로 쪼갠다.
+#stringr로 /PV, /pA, /PX<-보조용언이라 안써도 될듯?, 
+#/MM, /MA 이게 들어가는 것만 뽑는다. -> 용언, 수식언
+tab1_list <- apply(tab1_clean, 1:2, KoNLP::SimplePos22)
+sum1_list <- apply(sum1_clean, 1:2, KoNLP::SimplePos22)
+
+tab1_word <- vector("list", 120)
+for (i in 1:120) {
+  temp <- lapply(tab1_list[[i]], function(x) strsplit(x, split="[:+]"))
+  temp <- unlist(temp)
+  temp <- strsplit(temp, " ")
+  temp <- unlist(temp)
+  names(temp) <- NULL
+  tab1_word[[i]] <- temp
+}
+
+sum1_word <- vector("list", 120)
+for (i in 1:120) {
+  temp <- lapply(sum1_list[[i]], function(x) strsplit(x, split="[:+]"))
+  temp <- unlist(temp)
+  temp <- strsplit(temp, " ")
+  temp <- unlist(temp)
+  names(temp) <- NULL
+  sum1_word[[i]] <- temp
+}
+
+# 1.3.의미있는 품사만 추출해서 정제.
+words2df_tag <- function(wordvec) {
+  pv <- grep("PV", wordvec, value=T)
+  pa <- grep("PA", wordvec, value=T)
+  mm <- grep("MM", wordvec, value=T)
+  ma <- grep("MA", wordvec, value=T)
+  nc <- grep("NC", wordvec, value=T)
+  
+  pv <- paste0(gsub("/PV", "", pv), "다")
+  pv <- gsub("다다", "다", pv)
+  pa <- paste0(gsub("/PA", "", pa), "다")
+  pa <- gsub("다다", "다", pa)
+  mm <- gsub("/MM", "", mm)
+  ma <- gsub("/MA", "", ma)
+  nc <- gsub("/NC", "", nc)
+  
+  n1<-length(pv); n2<-length(pa); n3<-length(mm); n4<-length(ma); n5<-length(nc)
+  temp <- cbind(c(pv, pa, mm, ma, nc),
+                c(rep("pv",n1), rep("pa",n2), rep("mm",n3), rep("ma",n4), rep("nc",n5)))
+  temp <- as.data.frame(temp)
+  names(temp) <- c("word", "tag")
+  temp$word <- as.character(temp$word)
+  if(any(nchar(temp$word)==1)) {
+    temp <- temp[-which(nchar(temp$word)==1),] #한 글자 단어 제거. 필요에 따라서 특정 품사에만 제한.
+  }
+  return(temp)
+}
+
+tab1_freq <- lapply(tab1_word, words2df_tag)  #단어와 품사가 기록됨
+sum1_freq <- lapply(sum1_word, words2df_tag)  #단어와 품사가 기록됨
+
+tab1_td_list <- vector("list",120)
+sum1_td_list <- vector("list",120)
+for (i in 1:120) {tab1_td_list[[i]] <- as.data.frame(table(tab1_freq[[i]]$word))}  #단어와 빈도가 기록됨.
+for (i in 1:120) {sum1_td_list[[i]] <- as.data.frame(table(sum1_freq[[i]]$word))}  #단어와 빈도가 기록됨.
+
+
+
+
+
+
+
+
+#### table - 교사
+td1 <- Reduce(function(x,y) merge(x=x, y=y, by="Var1", all=T), tab1_td_list[seq(1,60,4)])
+td2 <- Reduce(function(x,y) merge(x=x, y=y, by="Var1", all=T), tab1_td_list[seq(2,60,4)])
+td3 <- Reduce(function(x,y) merge(x=x, y=y, by="Var1", all=T), tab1_td_list[seq(3,60,4)])
+td4 <- Reduce(function(x,y) merge(x=x, y=y, by="Var1", all=T), tab1_td_list[seq(4,60,4)])
+#NA를 0으로.
+td1[is.na(td1)]<-0
+td2[is.na(td2)]<-0
+td3[is.na(td3)]<-0
+td4[is.na(td4)]<-0
+
+
+#### table - 사정관
+td5 <- Reduce(function(x,y) merge(x=x, y=y, by="Var1", all=T), tab1_td_list[seq(61,120,4)])
+td6 <- Reduce(function(x,y) merge(x=x, y=y, by="Var1", all=T), tab1_td_list[seq(62,120,4)])
+td7 <- Reduce(function(x,y) merge(x=x, y=y, by="Var1", all=T), tab1_td_list[seq(63,120,4)])
+td8 <- Reduce(function(x,y) merge(x=x, y=y, by="Var1", all=T), tab1_td_list[seq(64,120,4)])
+#NA를 0으로.
+td5[is.na(td5)]<-0
+td6[is.na(td6)]<-0
+td7[is.na(td7)]<-0
+td8[is.na(td8)]<-0
+
+row.names(td1) <- 1:length(td1$Var1)
+row.names(td2) <- 1:length(td2$Var1)
+row.names(td3) <- 1:length(td3$Var1)
+row.names(td4) <- 1:length(td4$Var1)
+row.names(td5) <- 1:length(td5$Var1)
+row.names(td6) <- 1:length(td6$Var1)
+row.names(td7) <- 1:length(td7$Var1)
+row.names(td8) <- 1:length(td8$Var1)
+
+td1merge <- data.frame(term = td1$Var1, freq = rowSums(td1[,-1]))
+td2merge <- data.frame(term = td2$Var1, freq = rowSums(td2[,-1]))
+td3merge <- data.frame(term = td3$Var1, freq = rowSums(td3[,-1]))
+td4merge <- data.frame(term = td4$Var1, freq = rowSums(td4[,-1]))
+td5merge <- data.frame(term = td5$Var1, freq = rowSums(td5[,-1]))
+td6merge <- data.frame(term = td6$Var1, freq = rowSums(td6[,-1]))
+td7merge <- data.frame(term = td7$Var1, freq = rowSums(td7[,-1]))
+td8merge <- data.frame(term = td8$Var1, freq = rowSums(td8[,-1]))
+
+td <- Reduce(function(x,y) merge(x=x, y=y, by="term", all=T),
+             list(td1merge,td2merge,td3merge,td4merge,td5merge,td6merge,td7merge,td8merge))
+td[is.na(td)]<-0
+names(td) <- c("term", "q1t","q2t","q3t","q4t","q1o","q2o","q3o","q4o")
+
+## 의미없는 단어 제거1 - 빈도분석용도
+meanless <- c(which(td$term=="되다"), which(td$term=="성장하"), 
+              which(td$term=="아니다"), which(td$term=="어떤"),
+              which(td$term=="또한"), which(td$term=="하다"),
+              which(td$term=="가다"), which(td$term=="이런"),
+              which(td$term=="너무"), which(td$term=="경우"),
+              which(td$term=="년수업"), which(td$term=="그러다"),
+              which(td$term=="생기다"), which(td$term=="모든"),
+              which(td$term=="경우"), which(td$term=="결국"),
+              which(td$term=="같다"), which(td$term=="것인가에"),
+              which(td$term=="어떻다"), which(td$term=="부분"))
+td <- td[-meanless,]
+#write.csv(td, "td.csv")
+
+
+
+
+
+dim(td)
+td_red <- td[-which(rowSums(td[,-1])==1),]
+dim(td_red)
+
+tfidf<- function(td) {
+  
+  idf = log(dim(td)[2]/rowSums(td>0))
+  td2 = td * idf
+  
+  return(td2)
+}
+
+#td_red <- idf_trim(td_red)
+
+### 1.빈도 살펴보기
+a1 <- td_red[,c(1,2)][td_red[,2]>2,]; names(a1) <- c("term","freq")
+a2 <- td_red[,c(1,3)][td_red[,3]>2,]; names(a2) <- c("term","freq")
+a3 <- td_red[,c(1,4)][td_red[,4]>2,]; names(a3) <- c("term","freq")
+a4 <- td_red[,c(1,5)][td_red[,5]>2,]; names(a4) <- c("term","freq")
+a5 <- td_red[,c(1,6)][td_red[,6]>2,]; names(a5) <- c("term","freq")
+a6 <- td_red[,c(1,7)][td_red[,7]>2,]; names(a6) <- c("term","freq")
+a7 <- td_red[,c(1,8)][td_red[,8]>2,]; names(a7) <- c("term","freq")
+a8 <- td_red[,c(1,9)][td_red[,9]>2,]; names(a8) <- c("term","freq")
+
+filenames <- c("a1","a2","a3","a4","a5","a6","a7","a8")
+filepng <- list(a1,a2,a3,a4,a5,a6,a7,a8)
+
+for (i in 1:8) {
+  p <- ggplot(filepng[[i]], aes(x=term, y=freq, fill=freq)) + geom_bar(stat="identity") +
+      theme_bw() + xlab("출현단어") +ylab("단어빈도") +
+      theme(axis.text.x = element_text(family="HG", size=7, angle=60, vjust=0.6, colour="black"),
+            axis.title = element_text(family="HG")) +
+      scale_fill_gradient(low="grey94", high="black") +
+      guides(fill=FALSE)
+  ggsave(paste0(filenames[i],".png"),p)
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+### 2.잠재의미분석
+#tdlist <- list(td1, td2, td3, td4, td5, td6, td7, td8)
+#save(file="tdlist.R", tdlist)
+
+setwd("C:/data/roundtable/results2")
+load(file="tdlist.R")
+
+lsafun <- function(tdobject, dim=2, tfidf=F, trim=F) {
+  #pca = 설명분산 확인
+  #lsa = tk,dk,sk 산출
+  
+  mat <- tdobject[,-1]
+  temp3 <- 0
+  
+  #tf-idf
+  if (tfidf==T) {
+    idf = log(15/rowSums(mat>0))
+    mat <- mat * idf
+    temp3 <- quantile(idf,seq(0,1,0.05))}
+  
+
+  #trim
+  if (trim==T & temp3[2]!=temp3[3]) {
+    mat <- mat[-which(idf<temp3[2]),]}   #너무 자주 나옴.
+    
+  temp1 <- summary(princomp(mat))
+  temp2 <- lsa(mat,dim)
+
+  return(list(pca=temp1, lsa=temp2))
+}
+
+  
+axisdist <- function(tdobject, length=50, tfidf=F, trim=F, abs=T) {
+  ## 단어-점수 데이터 만들기
+  # length = 상위 몇 개 단어?
+  lsaresult <- lsafun(tdobject,2,trim=trim,tfidf=tfidf)$lsa
+
+  label = tdobject[,1]
+  axisinfo1 = order(abs(lsaresult$tk[,1]),decreasing = T)[1:length]
+  axisinfo2 = order(abs(lsaresult$tk[,2]),decreasing = T)[1:length]
+  
+  Axis1_label <- as.character(label[axisinfo1])
+  Axis2_label <- as.character(label[axisinfo2])
+
+  Axis1_score <- lsaresult$tk[axisinfo1,1]
+  Axis2_score <- lsaresult$tk[axisinfo2,2]
+  
+  #MDS할 때는 abs=F로 설정.
+  if (abs==T) {Axis1_score=abs(Axis1_score); Axis2_score=abs(Axis2_score)}
+  
+  tlist <- list(Axis1_label,Axis2_label)
+  score <- list(Axis1_score,Axis2_score)
+  axis <- c(rep("Axis1",length),rep("Axis2",length))
+  
+  return(data.frame(term=unlist(tlist),
+                      score=unlist(score),
+                      axis=axis))
+}
+
+
+
+blist <- vector("list",8)
+for (i in 1:8) {
+  tdn <- tdlist[[i]]
+  meanless <- c(which(tdn$Var1=="되다"), which(tdn$Var1=="성장하"), 
+                which(tdn$Var1=="아니다"), which(tdn$Var1=="어떤"),
+                which(tdn$Var1=="또한"), which(tdn$Var1=="하다"),
+                which(tdn$Var1=="가다"), which(tdn$Var1=="이런"),
+                which(tdn$Var1=="너무"), which(tdn$Var1=="경우"),
+                which(tdn$Var1=="년수업"), which(tdn$Var1=="그러다"),
+                which(tdn$Var1=="생기다"), which(tdn$Var1=="모든"),
+                which(tdn$Var1=="경우"), which(tdn$Var1=="결국"),
+                which(tdn$Var1=="같다"), which(tdn$Var1=="것인가에"),
+                which(tdn$Var1=="어떻다"), which(tdn$Var1=="부분"))
+  tdn <- tdn[-meanless,]
+  
+  #1회 등장 단어 제거.
+  neglect <- which(rowSums(tdn[,-1])==1)
+  tdn <- tdn[-neglect,]
+  blist[[i]] <- axisdist(tdn, tfidf=T, length=50)}
+
+
+lsafun(blist[[8]], tfidf=T)$pca
+
+
+filenames <- c("b1","b2","b3","b4","b5","b6","b7","b8")
+setwd("C:/data/roundtable/results")
+
+for (i in 1:4) {
+  p <- ggplot(blist[[i]], aes(x=term, y=score, fill=score)) + geom_bar(stat="identity") +
+      facet_wrap(axis~., scale="free", nrow=2) + theme_bw() + xlab("출현단어") +ylab("단어빈도") +
+      theme(axis.text.x = element_text(family="HG", size=10, angle=60, vjust=0.6, colour="black"),
+            axis.title.x = element_text(family="NS", face="bold", size=12),
+            axis.title.y = element_text(family="NS", face="bold", size=12))+
+    scale_fill_gradient(low=brewer.pal(9,"Oranges")[2], high=brewer.pal(9,"Oranges")[8])
+  ggsave(paste0(filenames[[i]],".png"), width = 12, height = 7, dpi=500)}
+
+for (i in 5:8) {
+  p <- ggplot(blist[[i]], aes(x=term, y=score, fill=score)) + geom_bar(stat="identity") +
+      facet_wrap(axis~., scale="free", nrow=2) + theme_bw() + xlab("출현단어") +ylab("단어빈도") +
+      theme(axis.text.x = element_text(family="HG", size=10, angle=60, vjust=0.6, colour="black"),
+            axis.title.x = element_text(family="NS", face="bold", size=12),
+            axis.title.y = element_text(family="NS", face="bold", size=12))+
+    scale_fill_gradient(low=brewer.pal(9,"Blues")[2], high=brewer.pal(9,"Blues")[8])
+  ggsave(paste0(filenames[[i]],".png"), width = 12, height = 7, dpi=500)}
+
+
+
+
+### MDS
+blist <- vector("list",8)
+for (i in 1:8) {
+  tdn <- tdlist[[i]]
+  meanless <- c(which(tdn$Var1=="되다"), which(tdn$Var1=="성장하"), 
+                which(tdn$Var1=="아니다"), which(tdn$Var1=="어떤"),
+                which(tdn$Var1=="또한"), which(tdn$Var1=="하다"),
+                which(tdn$Var1=="가다"), which(tdn$Var1=="이런"),
+                which(tdn$Var1=="너무"), which(tdn$Var1=="경우"),
+                which(tdn$Var1=="년수업"), which(tdn$Var1=="그러다"),
+                which(tdn$Var1=="생기다"), which(tdn$Var1=="모든"),
+                which(tdn$Var1=="경우"), which(tdn$Var1=="결국"),
+                which(tdn$Var1=="같다"), which(tdn$Var1=="것인가에"),
+                which(tdn$Var1=="어떻다"), which(tdn$Var1=="부분"))
+  tdn <- tdn[-meanless,]
+  blist[[i]] <- axisdist(tdn, tfidf=T, length=50, abs=F)}
+
+p=50
+lsa_r <- blist[[1]]
+lsa_term <- lsa_r$term
+lsa_scoremat <- cbind(lsa_r[1:p,2],lsa_r[(p+1):(p*2),2])
+lsa_scoremat
+
+d <- lsa_scoremat[,1] %*% t(lsa_scoremat[,1])
+fit_mds <- isoMDS(d, k=2)
+
+x<-fit_mds$points[,1]
+y<-fit_mds$points[,2]
+plot(x,y,xlab="제 1축", ylab="제 2축", main="잠재의미분석의 다차원척도 표현", type="n")
+text(x, y, labels=lsa_term[1:p])
+
+
+
+
+
+
+
+
+
+
+
+
+### 2.1.NMF
+### 2.2.LDA
+
+
+
+
+
+
+
+
+
+### 3.Network 분석
+## 3.1.상관계수 행렬
+blist <- vector("list",8)
+for (i in 1:8) {
+  tdn <- tdlist[[i]]
+  meanless <- c(which(tdn$Var1=="되다"), which(tdn$Var1=="성장하"), 
+                which(tdn$Var1=="아니다"), which(tdn$Var1=="어떤"),
+                which(tdn$Var1=="또한"), which(tdn$Var1=="하다"),
+                which(tdn$Var1=="가다"), which(tdn$Var1=="이런"),
+                which(tdn$Var1=="너무"), which(tdn$Var1=="경우"),
+                which(tdn$Var1=="년수업"), which(tdn$Var1=="그러다"),
+                which(tdn$Var1=="생기다"), which(tdn$Var1=="모든"),
+                which(tdn$Var1=="경우"), which(tdn$Var1=="결국"),
+                which(tdn$Var1=="같다"), which(tdn$Var1=="것인가에"),
+                which(tdn$Var1=="어떻다"), which(tdn$Var1=="부분"),
+                which(tdn$Var1=="대하다"), which(tdn$Var1=="위하다"),
+                which(tdn$Var1=="많다"), which(tdn$Var1=="통하다"),
+                which(tdn$Var1=="모두"), which(tdn$Var1=="부분"),
+                which(tdn$Var1=="다른"))
+  blist[[i]] <- tdn[-meanless,]}
+
+
+
+
+corlist <- vector("list",8)
+
+for (i in 1:8) {
+  td <- blist[[i]]
+  row.names(td) <- td$Var1
+  dat <- t(td); dat <- dat[-1,]
+  row.names(dat) =1:15
+  dat <- apply(dat, 2, as.numeric)
+  high20 <- order(colSums(dat), decreasing = T)[1:20]
+  datcor <- cor(dat[,high20])
+  corlist[[i]] <- datcor}
+  
+cornames <- c("c1","c2","c3","c4","c5","c6","c7","c8")
+i=1
+
+corrplot(corlist[[i]], method="shade", number.cex=.6,
+         order="hclust", hclust.method = "ward.D2", addrect=2,
+         shade.col=NA, tl.col="black",addCoef.col = "black")
+
+sort(rowSums(corlist[[1]]),decreasing = T)
+
+
+
+
+
